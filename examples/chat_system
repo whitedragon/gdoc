@@ -1,0 +1,224 @@
+this.join("utility_time");
+
+/**
+ * Available group types:
+ * A - global chat - filled with toall:
+ * V - vulgar chat - automatically filled with vulgar chat
+ * E - events - for relaying event information
+ *
+ * The underlying line type: 
+ * A 4-tuple : {account, timeAdded, input, broadcasted}
+ *
+ * @author WhiteDragon
+ * @return null
+ */
+function onCreated() {
+  this.bannedaccounts = {"GraalianNoob", "danixfun", "Graal764768"};
+  onInitialized();
+}
+
+/**
+ * @return null
+ */
+function onInitialized() {
+  //this.c.A.chat.delete(this.c.A.chat.size() - 1);
+  this.maxLines = 20; // max lines of text stored in a single group
+  if(this.c == NULL){
+    this.c = new TStaticVar(); // hash that stores all groups
+  }
+  system_chat = this;
+}
+
+/**
+ * Add a player to groups.
+ * @param object(TServerPlayer) The player.
+ * @return null
+ */
+public function playerLoggedIn(temp.pl){
+  this.addPlayerGroup("A", temp.pl.getName());
+  this.addPlayerGroup("S", temp.pl.getName());
+  if(temp.pl.guild != NULL){
+    this.addPlayerGroup("G" @ temp.pl.guild, temp.pl.getName());
+  }
+}
+
+/**
+ * Add a new line to a group, broadcast the change, and then garbage collect any old lines.
+ *
+ * @param string Group for the line to be added to
+ * @param string Account of the person who is adding the text
+ * @param string The contents of the line
+ * @return null
+ */
+public function addLine(temp.group, temp.account, temp.input) {
+  if (!groupExists(temp.group)) { // check if group doesn't already exist
+    createGroup(temp.group);  // if so, make it
+  }
+  switch(temp.group){
+    case "A":
+      savelog2("log_toalls.txt", temp.account @ ": " @ temp.input);
+    case "G":
+      temp.date = this.getDate(timevar2);
+      temp.input @= " (" @ temp.date[2] SPC this.getFormalMonthEnglish(temp.date[1]).substring(0,3) SPC temp.date[0].substring(2,2) @ ")";
+    break;
+  }
+  this.c.(@temp.group).chat.add({temp.account, timevar2, temp.input, false}); // add the line to the group
+  broadcastGroup(temp.group); // broadcast to all the online players who are in the group the new messages
+
+  garbageCollect(temp.group); // get rid of old lines
+}
+
+/**
+ * Remove all the old lines from a group.
+ *
+ * @param string Group the lines will be removed from.
+ * @return null
+ */
+function garbageCollect(temp.group) {
+  while (this.c.(@temp.group).chat.size() > this.maxLines) { // while there are more than this.maxLines
+    this.c.(@temp.group).chat.delete(0); // delete the oldest line
+  }
+}
+
+/**
+ * Check if a group exists
+ *
+ * @param string Group name.
+ * @return int Group exists.
+ */
+function groupExists(temp.group) {
+  return (this.c.(@temp.group) != null);
+}
+
+
+/**
+ * Create a new group.
+ *
+ * @param string Group name
+ * @return null
+ */
+function createGroup(temp.group) {
+  this.c.(@temp.group) = new TStaticVar();
+  this.c.(@temp.group).chat = {};
+  this.c.(@temp.group).onlinePlayers = {};
+}
+
+/**
+ * Broadcast all the new lines of a group to all the online players in the group.
+ *
+ * @param string Group name
+ * @return null
+ */
+function broadcastGroup(temp.group) {
+  temp.newLines = {};
+  for (temp.i = this.c.(@temp.group).chat.size()-1; temp.i >= 0; temp.i--) { // check every line starting from end
+    if (!this.c.(@temp.group).chat[temp.i][3]) { // to see if it hasn't already been broadcasted
+      this.c.(@temp.group).chat[temp.i][3] = true;
+      temp.newLines.insert(0, this.c.(@temp.group).chat[temp.i]); // add it to the lines to send 
+    } else { // otherwise
+      break; // stop looking
+    }
+  }
+
+  for ( temp.p : this.c.(@temp.group).onlinePlayers ) { // for all the online players
+    findPlayer(temp.p).triggerclient("weapon", "-System-Chat", "addLines", temp.group, temp.newLines); // send the new lines
+  }
+}
+
+/**
+ * Send all the lines of a group to a player.
+ *
+ * @param string Group name
+ * @param object(TServerPlayer) Player object
+ * @return null
+ */
+function sendGroup(temp.group, temp.player) {
+  temp.player.triggerclient("weapon", "-System-Chat", "addLines", temp.group, this.c.(@temp.group).chat); // send all the lines to the player
+}
+
+/**
+ * Add a player to a group.
+ * @param string Group.
+ * @param string Player account.
+ * @return null
+ */
+public function addPlayerGroup(temp.group, temp.account) {
+  if (!groupExists(temp.group)) { // check if group doesn't already exist
+    createGroup(temp.group);  // if so, make it
+  }
+  if (this.c.(@temp.group).onlinePlayers.index(temp.account) == -1) {
+    this.c.(@temp.group).onlinePlayers.add(temp.account); // add account to onlinePlayers array
+  }
+}
+
+/**
+ * Remove a player from a group.
+ * @param string Group name.
+ * @param string Player account.
+ * @return null
+ */
+public function removePlayerGroup(temp.group, temp.account) {
+  if (!groupExists(temp.group)) { // check if group doesn't already exist
+    createGroup(temp.group);  // if so, make it
+  }
+  this.c.(@temp.group).onlinePlayers.remove(temp.account); // remove account from onlinePlayers array
+}
+
+/**
+ * Route serverside triggers.
+ * @return null
+ */
+function onActionServerside() {
+  if (params[0] == "requestGroup") {
+    sendGroup(params[1], player);
+  } else if (params[0] == "addLine") {
+    if(this.canChat(player)){
+      temp.displayName = player.getName();
+      addLine(params[1], temp.displayName, params[2]);
+    }
+  } else if (params[0] == "removeFromGroup") {
+    removePlayerGroup(params[1], player.getName());
+  } else if (params[0] == "addToGroup") {
+    addPlayerGroup(params[1], player.getName());
+  }
+}
+
+/**
+ * Send a single message to a player.
+ * @param object(TServerPlayer) Player.
+ * @param string The group name to "fake" the message under.
+ * @param string The message.
+ * @return null
+ */
+public function singleMessage(temp.pl, temp.group, temp.message){
+  temp.pl.triggerclient("gui", "-System-Chat", "addLines", temp.group, {{NULL, timevar2, temp.message, true}});
+}
+
+/**
+ * Remove a player from their groups.
+ * @param object(TServerPlayer) Player.
+ * @return null
+ */
+public function playerLoggedOut(temp.p) {
+  if(temp.p.level == NULL){
+    return;
+  }
+  removePlayerGroup("G"@temp.p.guild, temp.p.getName());
+  removePlayerGroup("A", temp.p.getName());
+  removePlayerGroup("S", temp.p.getName());
+}
+
+/**
+ * Check if a player is allowed to chat.
+ * @param object(TServerPlayer) Player.
+ * @return int Allowed to chat.
+ */
+function canChat(temp.pl){
+  if(temp.pl.isJailed()){
+    return false;
+  }
+  if(this.bannedaccounts.index(temp.pl.account) > -1){
+    return false;
+  }
+  return true;
+}

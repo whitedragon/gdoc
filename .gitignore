@@ -1,0 +1,10 @@
+*~
+*#
+.#*
+.hpc
+*.hi
+*.o
+*.tix
+dist
+gdoc.html
+source.html
