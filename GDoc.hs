@@ -5,6 +5,8 @@ import Control.Applicative (pure, (<$>))
 import Data.Maybe
 import Data.List
 import Control.Monad.Identity
+import Data.Sequence (Seq, (|>), (<|), (><))
+import qualified Data.Sequence as S
 
 type DocParsec a = ParsecT String Doc Identity a
 
@@ -17,7 +19,7 @@ data Script = Script { sDoc :: Maybe Doc,
 data Doc = Doc { dFunctionName :: String
                , dPublic :: Bool
                , dTrigger :: Bool
-               , dParams :: [DocParam]
+               , dParams :: Seq DocParam
                , dReturn :: DocReturn
                , dDescription :: [String]
                , dAuthor :: Maybe String
@@ -40,7 +42,7 @@ emptyReturn :: DocReturn
 emptyReturn = DocReturn Unknown ""
 
 emptyDoc :: Doc
-emptyDoc = Doc "" False False [] emptyReturn [] Nothing False 0 False
+emptyDoc = Doc "" False False S.empty emptyReturn [] Nothing False 0 False
 
 emptyScript :: Script
 emptyScript = Script Nothing []
@@ -77,7 +79,7 @@ docParam = do
   paramType <- gType
   string " "
   desc <- manyTill anyChar (string "\n")
-  modifyState (\r -> r { dParams = dParams r ++ [(DocParam "" paramType desc)] })
+  modifyState (\r -> r { dParams = dParams r |> (DocParam "" paramType desc) })
   return ()
 
 docReturn :: DocParsec ()
@@ -144,10 +146,10 @@ gFunction = do
   skipMany (char ' ')
   paramNames <- between (string "(") (string ")") ((many (alphaNum <|> char '.')) `sepBy` (do string ","; optional spaces))
   let fParamNames' = filter (/= "") paramNames
-  modifyState (\r -> let fParamNames = filter (/= "") paramNames;
+  modifyState (\r -> let fParamNames = S.fromList $ filter (/= "") paramNames;
                          docParams = dParams r;
-                         extParams = docParams ++ replicate (length fParamNames - length docParams) emptyParam 
-                     in r { dParams = zipWith (\p n -> p { pName = n }) extParams fParamNames }
+                         extParams = docParams >< S.replicate (S.length fParamNames - S.length docParams) emptyParam 
+                     in r { dParams = S.zipWith (\p n -> p { pName = n }) extParams fParamNames }
               )
 
 comment :: DocParsec Doc

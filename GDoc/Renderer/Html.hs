@@ -10,6 +10,9 @@ import GDoc
 import Control.Monad
 import Data.Monoid
 import Data.List hiding (head, span)
+import Data.Sequence (Seq, (|>), (<|), (><))
+import qualified Data.Sequence as S
+import qualified Data.Foldable as F
 
 infixr 6 <>
 (<>) = mappend
@@ -38,7 +41,7 @@ docSynopsisHtml d =
   li ! class_ (docClass d) $ do
     a ! href ("#" <> stringValue (dFunctionName d)) $ string (dFunctionName d)
     " : " 
-    sequence_ $ intersperse " → " (map (prettyGType . pType) (dParams d) ++ [(prettyGType . rType) (dReturn d)])
+    sequence_ . intersperse " → " . F.toList $ fmap (prettyGType . pType) (dParams d) |> (prettyGType . rType) (dReturn d)
 
 
 
@@ -49,7 +52,7 @@ docHtml d =
       h3 $ string (dFunctionName d)
       a ! class_ "functionSource" ! href ("source.html#" `mappend` (stringValue . show $ dLineNumber d)) $ "Source"
     
-    table . sequence_ $ map docParamRow (dParams d) ++ [docReturnRow (dReturn d)]
+    table . sequence_ . F.toList $ fmap docParamRow (dParams d) |> docReturnRow (dReturn d)
 
     p . unlinesBr $ dDescription d
 
