@@ -18,4 +18,4 @@ formatSource :: [SourceLine] -> Html
 formatSource d = (header $ thelink ! [rel "stylesheet", thetype "text/css", href "screen.css"] $ noHtml) +++ (body . formatAsXHtml [OptNumberLines, OptLineAnchors] "javascript" $ d)
 
 generate :: String -> String
-generate = renderDocs . either (error . show) id . parseDoc
+generate = renderScript . either (error . show) id . parseDoc

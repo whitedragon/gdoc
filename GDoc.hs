@@ -1,24 +1,19 @@
-module GDoc where
+module GDoc (GCoreType(..), GType(..), Script(..), Doc(..), DocParam(..), DocReturn(..), parseDoc) where
 
 import Text.Parsec
-import Control.Applicative (pure)
+import Control.Applicative (pure, (<$>))
 import Data.Maybe
 import Data.List
 import Control.Monad.Identity
 
 type DocParsec a = ParsecT String Doc Identity a
 
-data GCoreType = GString | GInt | GFloat | GObject (Maybe String) | GArray GType | GNull deriving Show
+data GCoreType = GString | GInt | GFloat | GObject (Maybe String) | GArray GType | GNull
 data GType = Core [GCoreType] | Mixed | Unknown
-instance Show GType where
-  show (Core t) = intercalate "|" (map show t)
-  show Mixed = "Mixed"
-  show Unknown = "_"
 
 data Script = Script { sDoc :: Maybe Doc,
                        sFunctions :: [Doc]
                      }
-
 data Doc = Doc { dFunctionName :: String
                , dPublic :: Bool
                , dTrigger :: Bool
@@ -30,26 +25,13 @@ data Doc = Doc { dFunctionName :: String
                , dLineNumber :: Int
                , dScript :: Bool
                }
-instance Show Doc where
-  show d = "\n" ++ dFunctionName d ++ (if dDeprecated d then " (Deprecated)" else "") ++ ": \n"  
-           ++ (if not . null $ (dParams d) then "  Params:\n" ++  (unlines . map (("    " ++) . show) $ dParams d) else "")
-           ++ (\x -> "  Return:\n    " ++ (show x) ++ "\n") (dReturn d)
-           ++ maybe "" (\x -> "  Author: " ++ x ++ "\n") (dAuthor d)
-           ++ "  Description:\n" ++ (unlines . map ("    " ++) $ dDescription d)
-
-
 data DocParam = DocParam { pName :: String
                          , pType :: GType
                          , pDescription :: String
                          }
-instance Show DocParam where
-  show p = pName p ++ " - " ++ show (pType p) ++ " - " ++ pDescription p
-
 data DocReturn = DocReturn { rType :: GType
                            , rDescription :: String
                            }
-instance Show DocReturn where
-  show p = show (rType p) ++ " - " ++ rDescription p
 
 emptyParam :: DocParam
 emptyParam = DocParam "" Unknown ""
@@ -131,7 +113,7 @@ docLine = do
   string "*"
   skipMany (char ' ')
   
-  (try docParam
+  (    try docParam
    <|> try docReturn
    <|> try docAuthor
    <|> try docDeprecated
@@ -187,11 +169,10 @@ comment = do
   getState
 
 functions :: DocParsec [Doc]
-functions = fmap (fmap fromJust . filter isJust) $
-    manyTill ( fmap Just (comment)
-               <|> try (fmap Just (do putState emptyDoc; gFunction; getState))
-               <|> (do anyChar; return Nothing)
-             ) eof
+functions = catMaybes <$> manyTill l eof
+  where l =     fmap Just comment
+            <|> try (fmap Just (do putState emptyDoc; gFunction; getState))
+            <|> (do anyChar; return Nothing)
 
 scriptDoc :: DocParsec Doc
 scriptDoc = do
@@ -201,7 +182,7 @@ scriptDoc = do
 
 script :: DocParsec Script
 script = do
-  script <- try (scriptDoc >>= \c -> return $ Script (Just c) [])
+  script <- try (do c <- scriptDoc; return $ Script (Just c) [])
             <|> (return $ Script Nothing [])
   fs <- functions
   return $ script {sFunctions = fs}

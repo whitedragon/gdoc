@@ -1,5 +1,5 @@
 {-# LANGUAGE OverloadedStrings #-}
-module GDoc.Renderer.Html where
+module GDoc.Renderer.Html (renderScript) where
 
 import Prelude hiding (head, id, div, span)
 import Text.Blaze.Html4.Strict hiding (map)
@@ -85,7 +85,6 @@ scriptHtml s =
       link ! rel "stylesheet" ! type_ "text/css" ! href "screen.css"
     body $ do
       h1 $ "Documentation"
-      let x = sDoc s
       maybe (return ()) scriptDocHtml (sDoc s)
       let ds = sFunctions s
       div ! id "synopsisWrapper" $ do
@@ -95,5 +94,5 @@ scriptHtml s =
         h2 "Functions"
         ul ! class_ "functions" $ mapM_ docHtml ds
 
-renderDocs :: Script -> String
-renderDocs = renderHtml . scriptHtml
+renderScript :: Script -> String
+renderScript = renderHtml . scriptHtml
