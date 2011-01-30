@@ -15,6 +15,10 @@ instance Show GType where
   show Mixed = "Mixed"
   show Unknown = "_"
 
+data Script = Script { sDoc :: Maybe Doc,
+                       sFunctions :: [Doc]
+                     }
+
 data Doc = Doc { dFunctionName :: String
                , dPublic :: Bool
                , dTrigger :: Bool
@@ -24,6 +28,7 @@ data Doc = Doc { dFunctionName :: String
                , dAuthor :: Maybe String
                , dDeprecated :: Bool
                , dLineNumber :: Int
+               , dScript :: Bool
                }
 instance Show Doc where
   show d = "\n" ++ dFunctionName d ++ (if dDeprecated d then " (Deprecated)" else "") ++ ": \n"  
@@ -53,7 +58,10 @@ emptyReturn :: DocReturn
 emptyReturn = DocReturn Unknown ""
 
 emptyDoc :: Doc
-emptyDoc = Doc "" False False [] emptyReturn [] Nothing False undefined
+emptyDoc = Doc "" False False [] emptyReturn [] Nothing False 0 False
+
+emptyScript :: Script
+emptyScript = Script Nothing []
 
 gCoreType :: DocParsec [GCoreType]
 gCoreType = do
@@ -75,6 +83,11 @@ gCoreType = do
 gType :: DocParsec GType
 gType = fmap Core gCoreType
         <|> return Mixed
+
+docScript :: DocParsec ()
+docScript = do
+  docLineFlag "@script"
+  modifyState (\r -> r { dScript = True })
 
 docParam :: DocParsec ()
 docParam = do
@@ -102,10 +115,15 @@ docAuthor = do
   
 docDeprecated :: DocParsec ()
 docDeprecated = do
-  string "@deprecated"
+  docLineFlag "@deprecated"
+  modifyState (\r -> r { dDeprecated = True })
+
+docLineFlag :: String -> DocParsec ()
+docLineFlag f = do
+  string f
   skipMany (char ' ')
   char '\n'
-  modifyState (\r -> r { dDeprecated = True })
+  return ()
 
 docLine :: DocParsec ()
 docLine = do
@@ -117,6 +135,7 @@ docLine = do
    <|> try docReturn
    <|> try docAuthor
    <|> try docDeprecated
+   <|> try docScript
    <|> do d <- manyTill anyChar (try (string "\n") <|> try (string "*/"))
           modifyState (\r -> r { dDescription = dDescription r ++ [d] })
           return ()
@@ -162,16 +181,30 @@ comment = do
    in modifyState (\r -> r { dDescription = trim (dDescription r) }))
   spaces
   
-  gFunction
+  s <- getState
+  when (not . dScript $ s) gFunction
 
   getState
 
-expr :: DocParsec [Doc]
-expr = fmap (fmap fromJust . filter isJust) $
-       manyTill (fmap Just (comment)
-                 <|> try (fmap Just (do putState emptyDoc; gFunction; getState))
-                 <|> (anyChar >> pure Nothing)
-                ) eof
-       
-parseDoc :: String -> Either ParseError [Doc]
-parseDoc = runParser expr emptyDoc ""
+functions :: DocParsec [Doc]
+functions = fmap (fmap fromJust . filter isJust) $
+    manyTill ( fmap Just (comment)
+               <|> try (fmap Just (do putState emptyDoc; gFunction; getState))
+               <|> (do anyChar; return Nothing)
+             ) eof
+
+scriptDoc :: DocParsec Doc
+scriptDoc = do
+  c <- comment
+  when (not $ dScript c) (fail "Script-level docblock.")
+  return c
+
+script :: DocParsec Script
+script = do
+  script <- try (scriptDoc >>= \c -> return $ Script (Just c) [])
+            <|> (return $ Script Nothing [])
+  fs <- functions
+  return $ script {sFunctions = fs}
+
+parseDoc :: String -> Either ParseError Script
+parseDoc = runParser script emptyDoc ""

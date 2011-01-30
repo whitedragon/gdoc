@@ -1,6 +1,6 @@
-this.join("utility_time");
-
 /**
+ * Manage interplayer messages. Players are in groups, when a message is sent to a group it is broadcasted to all of those players.
+ *
  * Available group types:
  * A - global chat - filled with toall:
  * V - vulgar chat - automatically filled with vulgar chat
@@ -10,6 +10,11 @@ this.join("utility_time");
  * A 4-tuple : {account, timeAdded, input, broadcasted}
  *
  * @author WhiteDragon
+ * @script
+ */
+this.join("utility_time");
+
+/**
  * @return null
  */
 function onCreated() {

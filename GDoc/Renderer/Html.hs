@@ -51,8 +51,10 @@ docHtml d =
     
     table . sequence_ $ map docParamRow (dParams d) ++ [docReturnRow (dReturn d)]
 
-    p . sequence_ . intersperse br . map string $ dDescription d
+    p . unlinesBr $ dDescription d
 
+unlinesBr :: [String] -> Html
+unlinesBr = sequence_ . intersperse br . map string
 
 docParamRow :: DocParam -> Html
 docParamRow param =
@@ -68,8 +70,14 @@ docReturnRow ret =
     (td ! class_ "paramName returnName") . string $ "(return)"
     td . string . rDescription $ ret
 
-docsHtml :: [Doc] -> Html
-docsHtml ds =
+scriptDocHtml :: Doc -> Html
+scriptDocHtml d = do
+  div ! id "script" $ do
+    maybe (return ()) ((p ! class_ "author") . string . ("Author: "++)) (dAuthor d)
+    p . unlinesBr $ dDescription d
+
+scriptHtml :: Script -> Html
+scriptHtml s =
   docTypeHtml $ do
     head $ do
       meta ! httpEquiv "Content-Type" ! content "text/html; charset=UTF-8"      
@@ -77,6 +85,9 @@ docsHtml ds =
       link ! rel "stylesheet" ! type_ "text/css" ! href "screen.css"
     body $ do
       h1 $ "Documentation"
+      let x = sDoc s
+      maybe (return ()) scriptDocHtml (sDoc s)
+      let ds = sFunctions s
       div ! id "synopsisWrapper" $ do
         h2 "Synopsis"
         ul ! class_ "synopsisFunctions" $ mapM_ docSynopsisHtml ds
@@ -84,5 +95,5 @@ docsHtml ds =
         h2 "Functions"
         ul ! class_ "functions" $ mapM_ docHtml ds
 
-renderDocs :: [Doc] -> String
-renderDocs = renderHtml . docsHtml
+renderDocs :: Script -> String
+renderDocs = renderHtml . scriptHtml
