@@ -144,7 +144,7 @@ gFunction = do
               )
              
   skipMany (char ' ')
-  paramNames <- between (string "(") (string ")") ((many (alphaNum <|> char '.')) `sepBy` (do string ","; optional spaces))
+  paramNames <- between (string "(") (string ")") ((do skipMany (char ' '); s <- many (alphaNum <|> char '.' <|> char '_'); skipMany (char ' '); return s) `sepBy` (do string ","; optional spaces))
   let fParamNames' = filter (/= "") paramNames
   modifyState (\r -> let fParamNames = S.fromList $ filter (/= "") paramNames;
                          docParams = dParams r;
@@ -154,9 +154,10 @@ gFunction = do
 
 comment :: DocParsec Doc
 comment = do
-  try $ string "/**"
-  skipMany (char ' ')
-  char '\n'
+  try $ do
+    string "/**"
+    skipMany (char ' ')
+    char '\n'
   putState emptyDoc
              
   manyTill docLine (try $ do skipMany space; string "*/")
