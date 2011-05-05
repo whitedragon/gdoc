@@ -1,39 +1,46 @@
+{-# LANGUAGE BangPatterns, FlexibleInstances, MultiParamTypeClasses, OverloadedStrings #-}
 module GDoc (GCoreType(..), GType(..), Script(..), Doc(..), DocParam(..), DocReturn(..), parseDoc) where
 
-import Text.Parsec
-import Control.Applicative (pure, (<$>))
+import Data.Attoparsec.Char8
+import Data.Attoparsec.Combinator
+
+import Control.Applicative
 import Data.Maybe
-import Data.List
+import Prelude hiding (takeWhile)
+import Data.List hiding (takeWhile)
 import Control.Monad.Identity
 import Data.Sequence (Seq, (|>), (<|), (><))
 import qualified Data.Sequence as S
+import qualified Data.ByteString.Char8 as B
+import Debug.Trace
 
-type DocParsec a = ParsecT String Doc Identity a
+type DocParsec a = Parser a
 
-data GCoreType = GString | GInt | GFloat | GObject (Maybe String) | GArray GType | GNull
-data GType = Core [GCoreType] | Mixed | Unknown
+data GCoreType = GString | GInt | GFloat | GObject !(Maybe B.ByteString) | GArray !GType | GNull deriving Show
+data GType = Core ![GCoreType] | Mixed | Unknown deriving Show
 
-data Script = Script { sDoc :: Maybe Doc,
-                       sFunctions :: [Doc]
+data Script = Script { sFilename :: !B.ByteString
+                     , sDoc :: !(Maybe Doc)
+                     , sFunctions :: ![Doc]
                      }
-data Doc = Doc { dFunctionName :: String
-               , dPublic :: Bool
-               , dTrigger :: Bool
-               , dParams :: Seq DocParam
-               , dReturn :: DocReturn
-               , dDescription :: [String]
-               , dAuthor :: Maybe String
-               , dDeprecated :: Bool
-               , dLineNumber :: Int
-               , dScript :: Bool
-               }
-data DocParam = DocParam { pName :: String
-                         , pType :: GType
-                         , pDescription :: String
-                         }
-data DocReturn = DocReturn { rType :: GType
-                           , rDescription :: String
-                           }
+data Doc = Doc { dFunctionName :: !B.ByteString
+               , dPublic :: !Bool
+               , dTrigger :: !Bool
+               , dParams :: !(Seq DocParam)
+               , dReturn :: !DocReturn
+               , dDescription :: ![B.ByteString]
+               , dAuthor :: !(Maybe B.ByteString)
+               , dDeprecated :: !Bool
+               , dLineNumber :: !Int
+               , dScript :: !Bool
+               } deriving Show
+data DocParam = DocParam { pName :: !B.ByteString
+                         , pType :: !GType
+                         , pDescription :: !B.ByteString
+                         } deriving Show
+data DocReturn = DocReturn { rType :: !GType
+                           , rDescription :: !B.ByteString
+                           } deriving Show
 
 emptyParam :: DocParam
 emptyParam = DocParam "" Unknown ""
@@ -45,7 +52,7 @@ emptyDoc :: Doc
 emptyDoc = Doc "" False False S.empty emptyReturn [] Nothing False 0 False
 
 emptyScript :: Script
-emptyScript = Script Nothing []
+emptyScript = Script "" Nothing []
 
 gCoreType :: DocParsec [GCoreType]
 gCoreType = do
@@ -54,12 +61,12 @@ gCoreType = do
        <|> do string "float"; return GFloat
        <|> do string "null"; return GNull
        <|> do string "object"
-              objectType <- optionMaybe (between (string "(") (string ")") (many alphaNum))
-              return (GObject objectType)
+              objectType <- optionMaybe (between (char '(') (char ')') (takeWhile $ \a -> isAlpha_ascii a || isDigit a))
+              return (GObject $ objectType)
        <|> do string "array"
-              objectType <- optionMaybe (between (string "(") (string ")") gType)
+              objectType <- optionMaybe (between (char '(') (char ')') gType)
               return (GArray $ fromMaybe Mixed objectType)
-  n <- optionMaybe (string "|" >> gCoreType)
+  n <- optionMaybe (char '|' >> gCoreType)
   case n of
     Nothing -> return ([d])
     Just t -> return (d : t)
@@ -68,127 +75,133 @@ gType :: DocParsec GType
 gType = fmap Core gCoreType
         <|> return Mixed
 
-docScript :: DocParsec ()
-docScript = do
+docScript :: Doc -> DocParsec Doc
+docScript r = do
   docLineFlag "@script"
-  modifyState (\r -> r { dScript = True })
+  return $ r { dScript = True }
 
-docParam :: DocParsec ()
-docParam = do
+docParam :: Doc -> DocParsec Doc
+docParam r = do
   string "@param "
   paramType <- gType
-  string " "
-  desc <- manyTill anyChar (string "\n")
-  modifyState (\r -> r { dParams = dParams r |> (DocParam "" paramType desc) })
-  return ()
+  char ' '
+  desc <- takeWhile (/= '\n')
+  char '\n'
+  return $ r { dParams = dParams r |> (DocParam "" paramType desc) }
 
-docReturn :: DocParsec ()
-docReturn = do 
+docReturn :: Doc -> DocParsec Doc
+docReturn r = do 
   string "@return "
   returnType <- gType
-  optional $ string " "
-  desc <- manyTill anyChar (string "\n")
-  modifyState (\r -> r { dReturn = DocReturn returnType desc } )
-  return ()
+  optional $ char ' '
+  desc <- takeWhile (/= '\n')
+  char '\n'
+  return $ r { dReturn = DocReturn returnType desc }
 
-docAuthor :: DocParsec ()
-docAuthor = do
+docAuthor :: Doc -> DocParsec Doc
+docAuthor r = do
   string "@author "
-  author <- manyTill anyChar (string "\n")
-  modifyState (\r -> r { dAuthor = Just author })
+  author <- takeWhile (/= '\n')
+  char '\n'
+  return $ r { dAuthor = Just author }
   
-docDeprecated :: DocParsec ()
-docDeprecated = do
+docDeprecated :: Doc -> DocParsec Doc
+docDeprecated r = do
   docLineFlag "@deprecated"
-  modifyState (\r -> r { dDeprecated = True })
+  return $ r { dDeprecated = True }
 
-docLineFlag :: String -> DocParsec ()
+docLineFlag :: B.ByteString -> DocParsec ()
 docLineFlag f = do
   string f
   skipMany (char ' ')
   char '\n'
   return ()
 
-docLine :: DocParsec ()
-docLine = do
+docLine :: Doc -> DocParsec Doc
+docLine r = do
   skipMany (char ' ')
   string "*"
   skipMany (char ' ')
   
-  (    try docParam
-   <|> try docReturn
-   <|> try docAuthor
-   <|> try docDeprecated
-   <|> try docScript
+  (try (docParam r)
+   <|> try (docReturn r)
+   <|> try (docAuthor r)
+   <|> try (docDeprecated r)
+   <|> try (docScript r)
    <|> do d <- manyTill anyChar (try (string "\n") <|> try (string "*/"))
-          modifyState (\r -> r { dDescription = dDescription r ++ [d] })
-          return ()
-   <|> do char '\n'; return ())
-  
-  return ()
+          return $ r { dDescription = dDescription r ++ [B.pack d] }
+   <|> do char '\n'; return $ r)
 
-gFunction :: DocParsec ()
-gFunction = do
+gFunction :: Doc -> DocParsec Doc
+gFunction r = do
   public <- optionMaybe (string "public ")
-  modifyState (\r -> r { dPublic = isJust public })
+  let a = r { dPublic = isJust public }
   
   string "function "
+
+  -- !pos <- getPosition
+  -- let b = a { dLineNumber = sourceLine pos }
   
-  pos <- getPosition
-  modifyState (\r -> r { dLineNumber = sourceLine pos })
-  
-  fName <- manyTill anyChar (string " " <|> lookAhead (string "("))
-  modifyState (\r -> r { dFunctionName = fName
-                       , dTrigger = "on" `isPrefixOf` fName
-                       }
-              )
+  !fName <- takeWhile (\a -> isAlpha_ascii a || a == '_' || a == '.')
+  let c = a { dFunctionName = fName
+            , dTrigger = "on" `B.isPrefixOf` (fName)
+            }
              
-  skipMany (char ' ')
-  paramNames <- between (string "(") (string ")") ((do skipMany (char ' '); s <- many (alphaNum <|> char '.' <|> char '_'); skipMany (char ' '); return s) `sepBy` (do string ","; optional spaces))
-  let fParamNames' = filter (/= "") paramNames
-  modifyState (\r -> let fParamNames = S.fromList $ filter (/= "") paramNames;
-                         docParams = dParams r;
-                         extParams = docParams >< S.replicate (S.length fParamNames - S.length docParams) emptyParam 
-                     in r { dParams = S.zipWith (\p n -> p { pName = n }) extParams fParamNames }
-              )
+  skipWhile (==' ')
+
+  !paramNames <- between (char '(') (char ')') ((between (skipWhile (==' ')) (skipWhile (==' ')) (takeWhile $ \a -> isAlpha_ascii a || a == '_' || a == '.'))
+                                                `sepBy`
+                                                char ','
+                                               )
+  -- paramNames <- takeWhile (\a -> isAlpha_ascii a || a == '_' || a == '.' || a == ',')
+  -- let paramNames = "lol"
+
+  let d = let fParamNames = S.filter (/= "") $ S.fromList $ paramNames;
+              docParams = dParams r;
+              extParams = docParams >< S.replicate (S.length fParamNames - S.length docParams) emptyParam 
+           in c { dParams = S.zipWith (\p n -> p { pName = n }) extParams fParamNames }
+  
+  return $ d
 
 comment :: DocParsec Doc
 comment = do
-  try $ do
-    string "/**"
-    skipMany (char ' ')
-    char '\n'
-  putState emptyDoc
-             
-  manyTill docLine (try $ do skipMany space; string "*/")
+  string "/**\n"
   
-  (let trim = reverse . dropWhile (==[]) . reverse . dropWhile (==[]) 
-   in modifyState (\r -> r { dDescription = trim (dDescription r) }))
-  spaces
+  r <- foreverUntil docLine (try $ do skipMany space; string "*/") emptyDoc
   
-  s <- getState
-  when (not . dScript $ s) gFunction
+  let trim = reverse . dropWhile (==B.empty) . reverse . dropWhile (==B.empty) 
+  let a = r { dDescription = trim (dDescription r) }
+  
+  skipWhile isSpace
+  
+  if (not . dScript $ r) then gFunction r else return r
 
-  getState
+foreverUntil :: (a -> Parser a) -> Parser c -> a -> Parser a
+foreverUntil m sep a = do x <- m a; o <- optionMaybe sep; case o of { Just _ -> return $! x; Nothing -> foreverUntil m sep x }
+
+optionMaybe :: Parser a -> Parser (Maybe a)
+optionMaybe a = option Nothing (fmap Just a)
+
+between :: Parser a -> Parser b -> Parser c -> Parser c
+between open close p = do open; x <- p; close; return x
 
 functions :: DocParsec [Doc]
-functions = catMaybes <$> manyTill l eof
+functions = catMaybes <$> manyTill l endOfInput
   where l =     fmap Just comment
-            <|> try (fmap Just (do putState emptyDoc; gFunction; getState))
+            <|> (try $ fmap Just (gFunction emptyDoc))
             <|> (do anyChar; return Nothing)
 
-scriptDoc :: DocParsec Doc
+scriptDoc :: DocParsec (Maybe Doc)
 scriptDoc = do
-  c <- comment
-  when (not $ dScript c) (fail "Script-level docblock.")
-  return c
+  mc <- optionMaybe comment
+  return $ mc >>= (\c -> if (dScript $ c) then Just c else Nothing)
 
 script :: DocParsec Script
 script = do
-  script <- try (do c <- scriptDoc; return $ Script (Just c) [])
-            <|> (return $ Script Nothing [])
-  fs <- functions
-  return $ script {sFunctions = fs}
+  !script <- scriptDoc >>= \c -> return $! Script "" c []
+             -- (return $! emptyScript)
+  !fs <- functions
+  return $! script {sFunctions = fs}
 
-parseDoc :: String -> Either ParseError Script
-parseDoc = runParser script emptyDoc ""
+parseDoc :: B.ByteString -> Result Script
+parseDoc = parse script 

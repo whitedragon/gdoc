@@ -4,7 +4,7 @@ module GDoc.Renderer.Html (renderScript) where
 import Prelude hiding (head, id, div, span)
 import Text.Blaze.Html4.Strict hiding (map)
 import Text.Blaze.Html4.Strict.Attributes hiding (title, span)
-import Text.Blaze.Renderer.String (renderHtml)
+import Text.Blaze.Renderer.Utf8 (renderHtml)
 
 import GDoc
 import Control.Monad
@@ -13,9 +13,19 @@ import Data.List hiding (head, span)
 import Data.Sequence (Seq, (|>), (<|), (><))
 import qualified Data.Sequence as S
 import qualified Data.Foldable as F
+import qualified Data.ByteString.Char8 as B
+import qualified Data.ByteString.Lazy.Char8 as LB
+import qualified Data.Text.Encoding as E
+import qualified Data.Text as T
 
 infixr 6 <>
 (<>) = mappend
+
+asciiText :: B.ByteString -> Html
+asciiText = text . E.decodeASCII
+
+asciiTextValue :: B.ByteString -> AttributeValue
+asciiTextValue = textValue . E.decodeASCII
 
 prettyGCoreType :: GCoreType -> Html
 prettyGCoreType = f
@@ -24,7 +34,7 @@ prettyGCoreType = f
     f GInt = "int"
     f GFloat = "float"
     f (GObject Nothing) = "object"
-    f (GObject (Just o)) = do "object "; span ! class_ "objectType" $ string o
+    f (GObject (Just o)) = do "object "; span ! class_ "objectType" $ asciiText o
     f (GArray t) = do "array("; prettyGType t; ")"
     f GNull = "null"
 
@@ -39,44 +49,43 @@ docClass d = stringValue . unwords $ (if dPublic d then [] else ["private"]) ++ 
 docSynopsisHtml :: Doc -> Html
 docSynopsisHtml d =
   li ! class_ (docClass d) $ do
-    a ! href ("#" <> stringValue (dFunctionName d)) $ string (dFunctionName d)
+    a ! href ("#" <> asciiTextValue (dFunctionName d)) $ asciiText (dFunctionName d)
     " : " 
     sequence_ . intersperse " → " . F.toList $ fmap (prettyGType . pType) (dParams d) |> (prettyGType . rType) (dReturn d)
 
 
 
-docHtml :: Doc -> Html
-docHtml d =
-  li ! class_ (docClass d) ! id (stringValue (dFunctionName d)) $ do
+docHtml :: B.ByteString -> Doc -> Html
+docHtml filename d =
+  li ! class_ (docClass d) ! id (asciiTextValue (dFunctionName d)) $ do
     div ! class_ "functionTitle" $ do
-      h3 $ string (dFunctionName d)
-      a ! class_ "functionSource" ! href ("source.html#" `mappend` (stringValue . show $ dLineNumber d)) $ "Source"
+      h3 $ asciiText (dFunctionName d)
     
     table . sequence_ . F.toList $ fmap docParamRow (dParams d) |> docReturnRow (dReturn d)
 
     p . unlinesBr $ dDescription d
 
-unlinesBr :: [String] -> Html
-unlinesBr = sequence_ . intersperse br . map string
+unlinesBr :: [B.ByteString] -> Html
+unlinesBr = sequence_ . intersperse br . map asciiText
 
 docParamRow :: DocParam -> Html
 docParamRow param =
   tr $ do
     (td ! class_ "paramType") . prettyGType . pType $ param
-    (td ! class_ "paramName") . string . pName $ param
-    td . string . pDescription $ param
+    (td ! class_ "paramName") . asciiText . pName $ param
+    td . asciiText . pDescription $ param
 
 docReturnRow :: DocReturn -> Html
 docReturnRow ret =
   tr $ do
     (td ! class_ "paramType") . prettyGType . rType $ ret
-    (td ! class_ "paramName returnName") . string $ "(return)"
-    td . string . rDescription $ ret
+    (td ! class_ "paramName returnName") . asciiText $ "(return)"
+    td . asciiText . rDescription $ ret
 
 scriptDocHtml :: Doc -> Html
 scriptDocHtml d = do
   div ! id "script" $ do
-    maybe (return ()) ((p ! class_ "author") . string . ("Author: "++)) (dAuthor d)
+    maybe (return ()) ((p ! class_ "author") . asciiText . ("Author: " `mappend`)) (dAuthor d)
     p . unlinesBr $ dDescription d
 
 scriptHtml :: Script -> Html
@@ -85,9 +94,11 @@ scriptHtml s =
     head $ do
       meta ! httpEquiv "Content-Type" ! content "text/html; charset=UTF-8"      
       title "Documentation"
-      link ! rel "stylesheet" ! type_ "text/css" ! href "screen.css"
+      link ! rel "stylesheet" ! type_ "text/css" ! href "../screen.css"
     body $ do
-      h1 $ "Documentation"
+      h1 $ do
+        "Documentation: "
+        (a ! href ((asciiTextValue . sFilename $ s) <> "_source.html")) . asciiText $ sFilename s
       maybe (return ()) scriptDocHtml (sDoc s)
       let ds = sFunctions s
       div ! id "synopsisWrapper" $ do
@@ -95,7 +106,7 @@ scriptHtml s =
         ul ! class_ "synopsisFunctions" $ mapM_ docSynopsisHtml ds
       div ! id "functionsWrapper" $ do
         h2 "Functions"
-        ul ! class_ "functions" $ mapM_ docHtml ds
+        ul ! class_ "functions" $ mapM_ (docHtml (sFilename s)) ds
 
-renderScript :: Script -> String
+renderScript :: Script -> LB.ByteString
 renderScript = renderHtml . scriptHtml

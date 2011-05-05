@@ -48,14 +48,14 @@ Executable gdoc
   Main-is:           Main.hs
   
   -- Packages needed in order to build this package.
-  Build-depends:     base >= 3 && < 5, parsec ==3.1.0, mtl, blaze-html == 0.4.0.0, highlighting-kate, xhtml, containers, directory
+  Build-depends:     base >= 3 && < 5, attoparsec ==0.8.4.0, mtl, blaze-html == 0.4.0.0, parallel==3.1.0.1, text, xhtml, containers, directory, bytestring, threadmanager, highlighting-kate
   
   -- Modules not exported by this package.
   -- Other-modules:     
   
   -- Extra tools (e.g. alex, hsc2hs, ...) needed to build the source.
   -- Build-tools:         
-  Ghc-options:       -Wall -static -threaded -funbox-strict-fields -fno-warn-unused-do-bind
+  Ghc-options:       -Wall -static -threaded -funbox-strict-fields -fno-warn-unused-do-bind -O2
 
 Library
   Exposed-modules: GDoc
